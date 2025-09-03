@@ -213,25 +213,7 @@ class SAC(OffPolicyAlgorithmJax):
         rewards = data.rewards.numpy().flatten()
 
         # Convert to JAX arrays for bonus calculation
-        obs_jax = jnp.array(obs)
-        actions_jax = jnp.array(actions)
-        rewards_jax = jnp.array(rewards)
-
-        # --- Exploration bonus logic ---
-        if self.exploration_bonus:
-            q_values, _ = self.policy.qf_state.apply_fn(
-                {"params": self.policy.qf_state.params, "batch_stats": self.policy.qf_state.batch_stats},
-                obs_jax, actions_jax,
-                rngs={"dropout": jax.random.PRNGKey(0)},
-                mutable=False,
-                train=False,
-            )
-            sigma_q = jnp.std(q_values, axis=0).reshape(-1)  # shape: (batch_size,)
-            rewards_jax = rewards_jax + self.beta * sigma_q
-            self.logger.record("train/exploration_bonus_mean", float(jnp.mean(sigma_q)))
-
-        # Convert to numpy for buffer
-        rewards = np.array(rewards_jax)
+        # NOTE: removed pre-forward exploration-bonus compute to avoid extra non-jitted forward and host/device syncs
         # Convert to numpy
         data = ReplayBufferSamplesNp(
             obs,
@@ -262,6 +244,9 @@ class SAC(OffPolicyAlgorithmJax):
             self.ent_coef_state,
             self.key,
             self.policy_q_reduce_fn,
+            # pass exploration flags through to _train (minimal change)
+            self.exploration_bonus,
+            self.beta,
         )
         self._n_updates += gradient_steps
 
@@ -270,7 +255,7 @@ class SAC(OffPolicyAlgorithmJax):
             self.logger.record(f"train/{k}", v.item())
     
     @staticmethod
-    @partial(jax.jit, static_argnames=["crossq_style", "td3_mode", "use_bnstats_from_live_net"])
+    @partial(jax.jit, static_argnames=["crossq_style", "td3_mode", "use_bnstats_from_live_net", "exploration_bonus"])
     def update_critic(
         crossq_style: bool,
         td3_mode: bool,
@@ -285,6 +270,8 @@ class SAC(OffPolicyAlgorithmJax):
         rewards: np.ndarray,
         dones: np.ndarray,
         key: jax.random.KeyArray,
+        exploration_bonus: bool,
+        beta: float,
     ):
         key, noise_key, dropout_key_target, dropout_key_current, redq_key = jax.random.split(key, 5)
         # sample action from the actor
@@ -339,8 +326,7 @@ class SAC(OffPolicyAlgorithmJax):
                     {"params": params, "batch_stats": batch_stats}, 
                     jnp.concatenate([observations, next_observations], axis=0), 
                     jnp.concatenate([actions, next_state_actions], axis=0), 
-                    rngs={"dropout": dropout_key}, 
-                    mutable=["batch_stats"],
+                    rngs={"dropout": dropout_key}, mutable=["batch_stats"],
                     train=True,
                 )
                 current_q_values, next_q_values = jnp.split(catted_q_values, 2, axis=1)
@@ -352,13 +338,23 @@ class SAC(OffPolicyAlgorithmJax):
 
             next_q_values = jnp.min(next_q_values, axis=0)
             next_q_values = next_q_values - ent_coef_value * next_log_prob.reshape(-1, 1)
-            target_q_values = rewards.reshape(-1, 1) + (1 - dones.reshape(-1, 1)) * gamma * next_q_values  # shape is (batch_size, 1)
+
+            # ----- Exploration bonus added here -----
+            if exploration_bonus:
+                sigma_q = jnp.std(current_q_values, axis=0).reshape(-1)  # per-sample std
+                rewards_used = rewards.reshape(-1) + beta * sigma_q
+            else:
+                sigma_q = jnp.zeros_like(rewards.reshape(-1))  # no bonus
+                rewards_used = rewards.reshape(-1)
+            # ---------------------------------------
+
+            target_q_values = rewards_used.reshape(-1, 1) + (1 - dones.reshape(-1, 1)) * gamma * next_q_values  # shape is (batch_size, 1)
 
             loss = 0.5 * ((jax.lax.stop_gradient(target_q_values) - current_q_values) ** 2).mean(axis=1).sum()
 
-            return loss, (state_updates, current_q_values, next_q_values)
+            return loss, (state_updates, current_q_values, next_q_values, sigma_q.mean())
         
-        (qf_loss_value, (state_updates, current_q_values, next_q_values)), grads = \
+        (qf_loss_value, (state_updates, current_q_values, next_q_values, sigma_mean)), grads = \
             jax.value_and_grad(mse_loss, has_aux=True)(qf_state.params, qf_state.batch_stats, dropout_key_current)
         
         qf_state = qf_state.apply_gradients(grads=grads)
@@ -369,6 +365,7 @@ class SAC(OffPolicyAlgorithmJax):
             'ent_coef': ent_coef_value, 
             'current_q_values': current_q_values.mean(), 
             'next_q_values': next_q_values.mean(),
+            'exploration_bonus_mean': sigma_mean,
         }
 
         return (qf_state, metrics, key)
@@ -445,7 +442,7 @@ class SAC(OffPolicyAlgorithmJax):
         return ent_coef_state, ent_coef_loss
 
     @classmethod
-    @partial(jax.jit, static_argnames=["cls", "crossq_style", "td3_mode", "use_bnstats_from_live_net", "gradient_steps", "q_reduce_fn"])
+    @partial(jax.jit, static_argnames=["cls", "crossq_style", "td3_mode", "use_bnstats_from_live_net", "gradient_steps", "q_reduce_fn", "exploration_bonus"])
     def _train(
         cls,
         crossq_style: bool,
@@ -462,6 +459,8 @@ class SAC(OffPolicyAlgorithmJax):
         ent_coef_state: TrainState,
         key,
         q_reduce_fn,
+        exploration_bonus: bool,
+        beta: float,
     ):
         actor_loss_value = jnp.array(0)
 
@@ -490,6 +489,8 @@ class SAC(OffPolicyAlgorithmJax):
                 slice(data.rewards),
                 slice(data.dones),
                 key,
+                exploration_bonus,
+                beta,
             )
             qf_state = SAC.soft_update(tau, qf_state)
 
