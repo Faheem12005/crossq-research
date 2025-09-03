@@ -53,7 +53,7 @@ class SAC(OffPolicyAlgorithmJax):
         env: Union[GymEnv, str],
         learning_rate: Union[float, Schedule] = 3e-4,
         qf_learning_rate: Optional[float] = None,
-        buffer_size: int = 1_000_000,  # 1e6
+        buffer_size: int = 1_000_000,  # 1e6,
         learning_starts: int = 100,
         batch_size: int = 256,
         tau: float = 0.005,
@@ -79,6 +79,8 @@ class SAC(OffPolicyAlgorithmJax):
         device: str = "auto",
         _init_setup_model: bool = True,
         stats_window_size: int = 100,
+        exploration_bonus: bool = False,
+        beta: float = 0.0,
     ) -> None:
         super().__init__(
             policy=policy,
@@ -106,17 +108,16 @@ class SAC(OffPolicyAlgorithmJax):
             support_multi_env=True,
             stats_window_size=stats_window_size,
         )
-
         self.policy_delay = policy_delay
         self.ent_coef_init = ent_coef
         self.crossq_style = crossq_style
         self.td3_mode = td3_mode
         self.use_bnstats_from_live_net = use_bnstats_from_live_net
         self.policy_q_reduce_fn = policy_q_reduce_fn
-
+        self.exploration_bonus = exploration_bonus
+        self.beta = beta
         if td3_mode:
-            self.action_noise = NormalActionNoise(mean=jnp.zeros(1), sigma=jnp.ones(1) * 0.1)
-
+            self.action_noise = NormalActionNoise(mean=np.zeros(1), sigma=np.ones(1) * 0.1)
         if _init_setup_model:
             self._setup_model()
 
@@ -196,8 +197,6 @@ class SAC(OffPolicyAlgorithmJax):
         # Sample all at once for efficiency (so we can jit the for loop)
         data = self.replay_buffer.sample(batch_size * gradient_steps, env=self._vec_normalize_env)
         # Pre-compute the indices where we need to update the actor
-        # This is a hack in order to jit the train loop
-        # It will compile once per value of policy_delay_indices
         policy_delay_indices = {i: True for i in range(gradient_steps) if ((self._n_updates + i + 1) % self.policy_delay) == 0}
         policy_delay_indices = flax.core.FrozenDict(policy_delay_indices)
 
@@ -209,13 +208,27 @@ class SAC(OffPolicyAlgorithmJax):
             obs = data.observations.numpy()
             next_obs = data.next_observations.numpy()
 
+        actions = data.actions.numpy()
+        dones = data.dones.numpy().flatten()
+        rewards = data.rewards.numpy().flatten()
+
+        # --- Exploration bonus logic ---
+        if self.exploration_bonus:
+            # Compute Q-values for (s, a) from all critics
+            q_values = self.policy.predict_critic(obs, actions)  # shape: (n_critics, batch_size, 1)
+            # Take std across critics for each sample
+            sigma_q = np.std(q_values, axis=0).flatten()  # shape: (batch_size,)
+            # Add bonus to reward
+            rewards = rewards + self.beta * sigma_q
+            self.logger.record("train/exploration_bonus_mean", np.mean(sigma_q))
+
         # Convert to numpy
         data = ReplayBufferSamplesNp(
             obs,
-            data.actions.numpy(),
+            actions,
             next_obs,
-            data.dones.numpy().flatten(),
-            data.rewards.numpy().flatten(),
+            dones,
+            rewards,
         )
 
         (
@@ -241,7 +254,7 @@ class SAC(OffPolicyAlgorithmJax):
             self.policy_q_reduce_fn,
         )
         self._n_updates += gradient_steps
-        
+
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
         for k,v in log_metrics.items():
             self.logger.record(f"train/{k}", v.item())

@@ -34,6 +34,10 @@ parser.add_argument("-algo",        type=str, required=True, default='sac', choi
 parser.add_argument("-seed",        type=int, required=False, default=1, help="Set Seed.")
 parser.add_argument("-log_freq",    type=int, required=False, default=300, help="how many times to log during training")
 
+# Exploration bonus arguments
+parser.add_argument("--exploration_bonus", type=int, required=False, default=0, choices=[0,1], help="Enable exploration bonus based on critic disagreement (variance)")
+parser.add_argument("--beta", type=float, required=False, default=0.1, help="Exploration bonus scaling factor (beta)")
+
 parser.add_argument('-wandb_entity', type=str, required=False, default=None, help='your wandb entity name')
 parser.add_argument('-wandb_project', type=str, required=False, default='crossQ', help='wandb project name')
 parser.add_argument("-wandb_mode",    type=str, required=False, default='disabled', choices=['disabled', 'online'], help="enable/disable wandb logging")
@@ -59,6 +63,9 @@ parser.add_argument("-bnstats_live_net",  type=int,   required=False, default=0,
 
 experiment_time = time.time()
 args = parser.parse_args()
+
+# Convert exploration_bonus to bool for SAC
+args.exploration_bonus = bool(args.exploration_bonus)
 
 seed = args.seed
 args.algo = str.lower(args.algo)
@@ -203,6 +210,8 @@ with wandb.init(
         seed=seed,
         stats_window_size=1,  # don't smooth the episode return stats over time
         tensorboard_log=f"logs/{group + 'seed=' + str(seed) + '_time=' + str(experiment_time)}/",
+        exploration_bonus=args.exploration_bonus,
+        beta=args.beta,
     )
 
     # Create log dir where evaluation results will be saved
