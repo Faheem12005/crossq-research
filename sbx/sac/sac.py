@@ -212,16 +212,26 @@ class SAC(OffPolicyAlgorithmJax):
         dones = data.dones.numpy().flatten()
         rewards = data.rewards.numpy().flatten()
 
+        # Convert to JAX arrays for bonus calculation
+        obs_jax = jnp.array(obs)
+        actions_jax = jnp.array(actions)
+        rewards_jax = jnp.array(rewards)
+
         # --- Exploration bonus logic ---
         if self.exploration_bonus:
-            # Compute Q-values for (s, a) from all critics
-            q_values = self.policy.predict_critic(obs, actions)  # shape: (n_critics, batch_size, 1)
-            # Take std across critics for each sample
-            sigma_q = np.std(q_values, axis=0).flatten()  # shape: (batch_size,)
-            # Add bonus to reward
-            rewards = rewards + self.beta * sigma_q
-            self.logger.record("train/exploration_bonus_mean", np.mean(sigma_q))
+            q_values, _ = self.policy.qf_state.apply_fn(
+                {"params": self.policy.qf_state.params, "batch_stats": self.policy.qf_state.batch_stats},
+                obs_jax, actions_jax,
+                rngs={"dropout": jax.random.PRNGKey(0)},
+                mutable=False,
+                train=False,
+            )
+            sigma_q = jnp.std(q_values, axis=0).reshape(-1)  # shape: (batch_size,)
+            rewards_jax = rewards_jax + self.beta * sigma_q
+            self.logger.record("train/exploration_bonus_mean", float(jnp.mean(sigma_q)))
 
+        # Convert to numpy for buffer
+        rewards = np.array(rewards_jax)
         # Convert to numpy
         data = ReplayBufferSamplesNp(
             obs,
