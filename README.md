@@ -24,10 +24,13 @@ Execute the following commands to set up a conda environment to run experiments
 ```bash
 conda create -n crossq python=3.11.5
 conda activate crossq
+#if using cuda
 conda install -c nvidia cuda-nvcc=12.3.52
 
 pip install -e .
 pip install "jax[cuda12_pip]==0.4.19" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+#or if you're using tpu
+pip install "jax[tpu]==0.4.19" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 ```
 
 ## Running Experiments
