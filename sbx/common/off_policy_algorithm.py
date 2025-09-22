@@ -9,7 +9,6 @@ from stable_baselines3.common.noise import ActionNoise
 from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
 from stable_baselines3.common.policies import BasePolicy
 from stable_baselines3.common.type_aliases import GymEnv, Schedule
-from sbx.common.her_buffer import HerReplayBuffer
 
 class OffPolicyAlgorithmJax(OffPolicyAlgorithm):
     def __init__(

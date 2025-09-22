@@ -16,7 +16,11 @@ from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedul
 from sbx.common.off_policy_algorithm import OffPolicyAlgorithmJax
 from sbx.common.type_aliases import ReplayBufferSamplesNp, RLTrainState, ActorTrainState
 from sbx.sac.policies import SACPolicy
+from stable_baselines3 import HerReplayBuffer 
 
+#HER helped reward fn
+def her_reward_fn(achieved_goal: np.ndarray, desired_goal: np.ndarray, info: dict) -> float:
+    return float(-np.linalg.norm(np.array(achieved_goal) - np.array(desired_goal)))
 
 class EntropyCoef(nn.Module):
     ent_coef_init: float = 1.0
@@ -132,13 +136,20 @@ class SAC(OffPolicyAlgorithmJax):
             self._setup_model()
 
     def _setup_model(self) -> None:
-        if getattr(self, "use_her", False):
+        if getattr(self, "use_her", False) or self.use_her:
+            if self.her_ratio is not None:
+                n_sampled_goal = int(round(1.0 / (1.0 - float(self.her_ratio)) - 1.0))
+                n_sampled_goal = max(1, n_sampled_goal)
+            else:
+                n_sampled_goal = 4
+
             self.replay_buffer_class = HerReplayBuffer
             self.replay_buffer_kwargs.update(
                 dict(
-                    strategy=self.her_strategy,
-                    her_ratio=self.her_ratio,
-                    reward_fn=self.env.compute_reward,
+                    env=self.env,
+                    n_sampled_goal=n_sampled_goal,
+                    goal_selection_strategy=self.her_strategy,
+                    copy_info_dict=False,
                 )
             )
 
@@ -194,6 +205,26 @@ class SAC(OffPolicyAlgorithmJax):
 
         # automatically set target entropy if needed
         self.target_entropy = -np.prod(self.action_space.shape).astype(np.float32)
+
+        # --- debug/check that HER buffer was created (temporary checks) ---
+        # Use `self` (not `model`) and be defensive about attributes
+        print("replay_buffer_class:", getattr(self, "replay_buffer_class", None))
+        print("replay_buffer_kwargs:", getattr(self, "replay_buffer_kwargs", None))
+
+        if hasattr(self, "replay_buffer"):
+            print("actual buffer type:", type(self.replay_buffer))
+            # SB3 HerReplayBuffer exposes `n_sampled_goal` and `her_ratio`.
+            if hasattr(self.replay_buffer, "n_sampled_goal") or hasattr(self.replay_buffer, "her_ratio"):
+                print("HER active.")
+                print("  n_sampled_goal:", getattr(self.replay_buffer, "n_sampled_goal", None))
+                print("  her_ratio:", getattr(self.replay_buffer, "her_ratio", None))
+                # if `env` forwarded correctly, HerReplayBuffer.env should exist
+                print("  buffer.env is set:", getattr(self.replay_buffer, "env", None) is not None)
+            else:
+                print("HER not active (buffer has no HER attributes).")
+        else:
+            print("No replay_buffer attribute found on self.")
+        # --- end debug ---
 
     def learn(
         self,

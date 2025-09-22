@@ -200,6 +200,11 @@ with wandb.init(
                 'b2': 0.999 # default
             })
         }),
+        #HER arguments
+        use_her=args.use_her,
+        her_strategy=args.her_strategy,
+        her_ratio=args.her_ratio,
+        #END HER arguments
         gradient_steps=args.utd,
         policy_delay=args.policy_delay,
         crossq_style=bool(args.crossq_style),
