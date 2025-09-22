@@ -31,6 +31,24 @@ pip install -e .
 pip install "jax[cuda12_pip]==0.4.19" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 #or if you're using tpu
 pip install "jax[tpu]==0.4.19" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+
+#setup for gymnasium-robotics
+#1. install system packages
+sudo apt update
+sudo apt install -y libosmesa6-dev libglfw3 build-essential
+sudo apt install -y libglew-dev libgl1-mesa-dev libxrandr-dev libxinerama-dev libxcursor-dev
+
+# Download MuJoCo 2.1.0
+mkdir -p ~/.mujoco
+cd ~/.mujoco
+wget https://github.com/deepmind/mujoco/releases/download/2.1.0/mujoco210-linux-x86_64.tar.gz
+tar -xvzf mujoco210-linux-x86_64.tar.gz
+export MUJOCO_PY_MUJOCO_PATH="$HOME/.mujoco/mujoco210"
+export LD_LIBRARY_PATH="$MUJOCO_PY_MUJOCO_PATH/bin:$LD_LIBRARY_PATH"
+
+#create env with yaml
+conda env create -f environment.yml
+
 ```
 
 ## Running Experiments

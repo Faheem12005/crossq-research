@@ -22,6 +22,8 @@ from sbx.sac.actor_critic_evaluation_callback import CriticBiasCallback, EvalCal
 from sbx.sac.utils import *
 
 import gymnasium as gym
+import gymnasium_robotics
+gym.register_envs(gymnasium_robotics)
 from shimmy.registration import DM_CONTROL_SUITE_ENVS
 
 

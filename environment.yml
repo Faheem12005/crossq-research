@@ -1,0 +1,7 @@
+name: crossq
+channels:
+  - defaults
+dependencies:
+  - python=3.11.5
+  - cuda-nvcc=12.3.52
+prefix: /home/faheem/miniconda3/envs/crossq
