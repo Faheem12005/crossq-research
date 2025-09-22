@@ -51,6 +51,11 @@ class SAC(OffPolicyAlgorithmJax):
         self,
         policy,
         env: Union[GymEnv, str],
+        #HER specific arguments
+        use_her: bool = False,
+        her_strategy: str = "future",
+        her_ratio: float = 0.8,
+        # End HER args
         learning_rate: Union[float, Schedule] = 3e-4,
         qf_learning_rate: Optional[float] = None,
         buffer_size: int = 1_000_000,  # 1e6,
@@ -108,6 +113,11 @@ class SAC(OffPolicyAlgorithmJax):
             support_multi_env=True,
             stats_window_size=stats_window_size,
         )
+        #HER specific
+        self.use_her = use_her
+        self.her_strategy = her_strategy
+        self.her_ratio = her_ratio
+        # End HER args
         self.policy_delay = policy_delay
         self.ent_coef_init = ent_coef
         self.crossq_style = crossq_style
@@ -122,6 +132,16 @@ class SAC(OffPolicyAlgorithmJax):
             self._setup_model()
 
     def _setup_model(self) -> None:
+        if getattr(self, "use_her", False):
+            self.replay_buffer_class = HerReplayBuffer
+            self.replay_buffer_kwargs.update(
+                dict(
+                    strategy=self.her_strategy,
+                    her_ratio=self.her_ratio,
+                    reward_fn=self.env.compute_reward,
+                )
+            )
+
         super()._setup_model()
 
         if not hasattr(self, "policy") or self.policy is None:

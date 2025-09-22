@@ -61,6 +61,12 @@ parser.add_argument("-total_timesteps",   type=int,   required=False, default=5e
 
 parser.add_argument("-bnstats_live_net",  type=int,   required=False, default=0,choices=[0,1], help="use bn running statistics from live network within the target network")
 
+#add arguments for her
+parser.add_argument("--use_her", action="store_true", help="Enable Hindsight Experience Replay")
+parser.add_argument("--her_strategy", type=str, default="future", choices=["future", "final"],
+                    help="HER relabeling strategy")
+parser.add_argument("--her_ratio", type=float, default=0.8, help="Fraction of relabeled transitions per batch")
+
 experiment_time = time.time()
 args = parser.parse_args()
 
