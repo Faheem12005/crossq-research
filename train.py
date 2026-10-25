@@ -69,6 +69,11 @@ parser.add_argument("--her_strategy", type=str, default="future", choices=["futu
                     help="HER relabeling strategy")
 parser.add_argument("--her_ratio", type=float, default=0.8, help="Fraction of relabeled transitions per batch")
 
+# Q-target / warm-up arguments
+parser.add_argument("-gamma", type=float, required=False, default=0.99, help="discount factor (Swimmer-v4 still forces 0.9999)")
+parser.add_argument("-learning_starts", type=int, required=False, default=5000, help="env steps of random exploration before updates start")
+parser.add_argument("--clip_q_target", action="store_true", help="clip critic target to [-1/(1-gamma), 0]; sparse rewards only")
+
 experiment_time = time.time()
 args = parser.parse_args()
 
@@ -213,11 +218,11 @@ with wandb.init(
         td3_mode=td3_mode,
         use_bnstats_from_live_net=bool(args.bnstats_live_net),
         policy_q_reduce_fn=policy_q_reduce_fn,
-        learning_starts=5000,
+        learning_starts=args.learning_starts,
         learning_rate=args.lr,
         qf_learning_rate=args.lr,
         tau=args.tau,
-        gamma=0.99 if not args.env == 'Swimmer-v4' else 0.9999,
+        gamma=args.gamma if not args.env == 'Swimmer-v4' else 0.9999,
         verbose=0,
         buffer_size=1_000_000,
         seed=seed,
@@ -225,6 +230,7 @@ with wandb.init(
         tensorboard_log=f"logs/{group + 'seed=' + str(seed) + '_time=' + str(experiment_time)}/",
         exploration_bonus=args.exploration_bonus,
         beta=args.beta,
+        clip_q_target=args.clip_q_target,
     )
 
     # Create log dir where evaluation results will be saved
@@ -239,7 +245,7 @@ with wandb.init(
         jax_random_key_for_seeds=args.seed,
         best_model_save_path=None,
         log_path=eval_log_dir, eval_freq=eval_freq,
-        n_eval_episodes=1, deterministic=True, render=False
+        n_eval_episodes=10, deterministic=True, render=False
     )
 
     # Callback that evaluates q bias according to the REDQ paper.

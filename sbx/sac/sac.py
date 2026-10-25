@@ -90,6 +90,7 @@ class SAC(OffPolicyAlgorithmJax):
         stats_window_size: int = 100,
         exploration_bonus: bool = False,
         beta: float = 0.0,
+        clip_q_target: bool = False,
     ) -> None:
         super().__init__(
             policy=policy,
@@ -130,6 +131,8 @@ class SAC(OffPolicyAlgorithmJax):
         self.policy_q_reduce_fn = policy_q_reduce_fn
         self.exploration_bonus = exploration_bonus
         self.beta = beta
+        self.q_min = -1.0 / (1.0 - gamma) if clip_q_target else -float("inf")
+        self.q_max = 0.0 if clip_q_target else float("inf")
         if td3_mode:
             self.action_noise = NormalActionNoise(mean=np.zeros(1), sigma=np.ones(1) * 0.1)
         if _init_setup_model:
@@ -298,6 +301,8 @@ class SAC(OffPolicyAlgorithmJax):
             # pass exploration flags through to _train (minimal change)
             self.exploration_bonus,
             self.beta,
+            self.q_min,
+            self.q_max,
         )
         self._n_updates += gradient_steps
 
@@ -323,6 +328,8 @@ class SAC(OffPolicyAlgorithmJax):
         key: jax.random.KeyArray,
         exploration_bonus: bool,
         beta: float,
+        q_min: float,
+        q_max: float,
     ):
         key, noise_key, dropout_key_target, dropout_key_current, redq_key = jax.random.split(key, 5)
         # sample action from the actor
@@ -400,6 +407,7 @@ class SAC(OffPolicyAlgorithmJax):
             # ---------------------------------------
 
             target_q_values = rewards_used.reshape(-1, 1) + (1 - dones.reshape(-1, 1)) * gamma * next_q_values  # shape is (batch_size, 1)
+            target_q_values = jnp.clip(target_q_values, q_min, q_max)
 
             loss = 0.5 * ((jax.lax.stop_gradient(target_q_values) - current_q_values) ** 2).mean(axis=1).sum()
 
@@ -512,6 +520,8 @@ class SAC(OffPolicyAlgorithmJax):
         q_reduce_fn,
         exploration_bonus: bool,
         beta: float,
+        q_min: float,
+        q_max: float,
     ):
         actor_loss_value = jnp.array(0)
 
@@ -542,6 +552,8 @@ class SAC(OffPolicyAlgorithmJax):
                 key,
                 exploration_bonus,
                 beta,
+                q_min,
+                q_max,
             )
             qf_state = SAC.soft_update(tau, qf_state)
 
